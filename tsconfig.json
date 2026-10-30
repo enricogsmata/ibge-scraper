@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "types": [
+      "node"
+    ],
+    /* Ambiente de Execução e Módulos */
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    /* Pastas e Emissão */
+    "outDir": "./dist",
+    /* Interoperabilidade e Emissão */
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "sourceMap": true,
+    /* Tipagem Estrita */
+    "strict": true,
+    "noUncheckedIndexedAccess": true
+  },
+  "include": [
+    "src/**/*",
+    "*.config.ts",
+    "drizzle*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
+}
