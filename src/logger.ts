@@ -1,7 +1,11 @@
 // src/logger.ts
-import pino, { Logger as PinoInstance, TransportTargetOptions } from 'pino';
+import pino, { Logger as PinoInstance } from 'pino';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { Writable } from 'node:stream';
+import { rawDb } from './db/raw/connection.js';
+import { Logs } from './db/raw/schema.js';
+import pinoPretty from 'pino-pretty';
 
 const isDev = process.env.NODE_ENV !== 'production';
 
@@ -27,33 +31,64 @@ function resolveModuleName(moduleInput: string): string {
     return moduleInput;
 }
 
-// Configuração dos transports (Terminal + Banco MySQL)
-const targets: TransportTargetOptions[] = [
-    {
-        target: isDev ? 'pino-pretty' : 'pino/file',
-        options: isDev
-            ? {
-                colorize: true,
-                translateTime: 'SYS:standard',
-                ignore: 'pid,hostname',
-            }
-            : { destination: 1 },
-        level: process.env.LOG_LEVEL || 'info',
+const LEVEL_NAMES: Record<number, string> = {
+    10: 'trace',
+    20: 'debug',
+    30: 'info',
+    40: 'warn',
+    50: 'error',
+    60: 'fatal',
+};
+
+// Stream direto no banco via Drizzle
+const dbStream = new Writable({
+    async write(chunk, _encoding, callback) {
+        try {
+            const obj = JSON.parse(chunk.toString());
+            const levelName = LEVEL_NAMES[obj.level] || String(obj.level);
+
+            await rawDb.insert(Logs).values({
+                message: obj.msg || '',
+                level: levelName,
+                module: obj.module || null,
+                context: typeof obj.context === 'object' ? JSON.stringify(obj.context) : obj.context || null,
+                timestamp: new Date(obj.time),
+            });
+        } catch (err) {
+            console.error('Erro ao salvar log no banco:', err);
+        } finally {
+            callback();
+        }
     },
-    {
-        target: fileURLToPath(new URL('./db-transport.js', import.meta.url)),
-        options: {},
-        level: 'info',
-    },
+});
+
+// Configura stream do console com pino-pretty em dev
+const consoleStream = isDev
+    ? pinoPretty({
+          colorize: true,
+          translateTime: 'yyyy-mm-dd HH:MM:ss',
+          ignore: 'pid,hostname',
+      })
+    : process.stdout;
+
+// Combina terminal formatado com stream do banco
+const streams = [
+    { stream: consoleStream },
+    { stream: dbStream, level: 'info' as const },
 ];
 
-const transport = pino.transport({ targets });
+const pinoBase = pino(
+    {
+        level: process.env.LOG_LEVEL || (isDev ? 'debug' : 'info'),
+    },
+    pino.multistream(streams)
+);
 
 export class AppLogger {
     private pino: PinoInstance;
 
     constructor(instance?: PinoInstance) {
-        this.pino = instance || pino(transport);
+        this.pino = instance || pinoBase;
     }
 
     forModule(moduleMetaUrlOrName: string): AppLogger {

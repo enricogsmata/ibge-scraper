@@ -15,6 +15,9 @@
     "typescript": "^7.0.2"
   },
   "scripts": {
-    "git": "cls && git add . && git commit -m "
+    "raw:push": "cls && drizzle-kit push --config=drizzle.raw.config.ts",
+
+    "git": "cls && git add . && git commit -m ",
+    "i": "cls && npm run raw:push && tsx ./src/index.ts"
   }
 }
