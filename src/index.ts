@@ -1,4 +1,4 @@
-import { runMainPageScraper } from "./scraper/scraper.js";
+import { runMainPageScraper } from "./scraper.js";
 
 async function main() {
     await runMainPageScraper();

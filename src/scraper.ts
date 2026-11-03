@@ -1,8 +1,8 @@
 import puppeteer, { ElementHandle, Page } from "puppeteer";
-import { logger } from "../logger.js";
+import { logger } from "./logger.js";
 import { describe } from "node:test";
-import { rawDb } from "../db/raw/connection.js";
-import { ModuleApiData, Modules } from "../db/raw/schema.js";
+import { rawDb } from "./db/raw/connection.js";
+import { ModuleApiData, Modules } from "./db/raw/schema.js";
 import { eq, sql } from "drizzle-orm";
 
 const baseLogger = logger.forModule(import.meta.url);
