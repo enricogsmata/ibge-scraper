@@ -1,30 +1,57 @@
 import puppeteer, { ElementHandle, Page } from "puppeteer";
 import { logger } from "./logger.js";
-import { describe } from "node:test";
 import { rawDb } from "./db/raw/connection.js";
 import { ModuleApiData, Modules } from "./db/raw/schema.js";
 import { eq, sql } from "drizzle-orm";
+import { TModule, TModuleApiDataRaw } from "./db/raw/types.js";
+import { isExcludedEndpoint } from "./helpers.js";
 
 const baseLogger = logger.forModule(import.meta.url);
 const MAIN_URL: string = 'https://servicodados.ibge.gov.br/api/docs';
 
-type Module = {
+type RawModule = {
     name: string,
     description: string,
     link: string
 }
 
-type ModuleWithApiData = {
-    module: Module,
-    apiUrl: string,
-    params: {
-        name: string,
-        description: string,
-        format: string
-    }[]
+async function getPersistedModules(): Promise<TModule[]> {
+    const log = baseLogger.forMethod('getModulesIds');
+    try {
+        const modules = await rawDb
+            .select()
+            .from(Modules);
+
+        return modules ?? [];
+    } catch (error) {
+        log.error({ error }, "Falha ao obter módulos persistidos.");
+        return [];
+    }
 }
 
-async function persistFoundModules(modules: Module[], modulesWithApiData: ModuleWithApiData[]) {
+async function persisTModuleApiDataRaw(modulesApiData: TModuleApiDataRaw[]) {
+    const log = baseLogger.forMethod('persisTModuleApiDataRaw');
+    try {
+        for (const moduleApiData of modulesApiData) {
+            await rawDb
+                .insert(ModuleApiData)
+                .values({ ...moduleApiData })
+                .onDuplicateKeyUpdate({
+                    set: {
+                        id: sql`VALUES(id)`,
+                        apiUrl: sql`VALUES(api_url)`,
+                        moduleId: sql`VALUES(module_id)`,
+                        params: sql`VALUES(params)`
+                    }
+                })
+
+        }
+    } catch (error) {
+        log.error({ data: error }, `Falha na persistência dos módulos encontrados!`);
+    }
+}
+
+async function persistFoundModules(modules: RawModule[]) {
     const log = baseLogger.forMethod('persistFoundModules');
     try {
         await rawDb.delete(ModuleApiData);
@@ -40,31 +67,12 @@ async function persistFoundModules(modules: Module[], modulesWithApiData: Module
                     name: sql`VALUES(name)`
                 }
             })
-
-        for (const moduleWithApiData of modulesWithApiData) {
-            const [moduleId] = await rawDb
-                .select()
-                .from(Modules)
-                .where(eq(Modules.link, moduleWithApiData.module.link));
-
-            if (moduleId) {
-                await rawDb
-                    .insert(ModuleApiData)
-                    .values({
-                        apiUrl: moduleWithApiData.apiUrl,
-                        moduleId: moduleId.id,
-                        params: moduleWithApiData.params
-                    })
-            } else {
-                log.error({}, `Não foi possível inserir os dados da API do módulo.`);
-            }
-        }
     } catch (error) {
         log.error({ data: error }, `Falha na persistência dos módulos encontrados!`);
     }
 }
 
-async function scrapeMainPageModules(page: Page): Promise<Module[]> {
+async function scrapeMainPageModules(page: Page): Promise<RawModule[]> {
     const log = baseLogger.forMethod('scrapeMainPageModules');
 
     log.info('> Navegando para a página principal... <');
@@ -73,7 +81,7 @@ async function scrapeMainPageModules(page: Page): Promise<Module[]> {
     await page.waitForSelector('.l-content-inner .c-wrapper', { timeout: 60000 });
     log.info('> Módulos encontrados! <');
 
-    const modules: Module[] = await page.$$eval('.c-wrapper', (elements, mainUrl) => elements.map((element) => {
+    const modules: RawModule[] = await page.$$eval('.c-wrapper', (elements, mainUrl) => elements.map((element) => {
         const name = element.querySelector('.headline')?.textContent;
         const description = element.querySelector('.subhead')?.textContent;
         const link = element.querySelector('.headline')?.getAttribute('href') ?? '';
@@ -89,10 +97,11 @@ async function scrapeMainPageModules(page: Page): Promise<Module[]> {
     return modules;
 }
 
-async function scrapeModuleApiPage(page: Page, module: Module): Promise<ModuleWithApiData[]> {
+async function scrapeModuleApiPage(page: Page, module: TModule): Promise<TModuleApiDataRaw[]> {
     const foundModulesApiData = await page.$$eval('section[id^="api-"] div[id^="api-"]', (elements, currentModule) => elements.map((element) => {
 
         const apiUrl = element.querySelector('code > span.pln')?.textContent.trim() ?? '';
+        const method = element.querySelector('pre.prettyprint')?.getAttribute('data-type') ?? '';
         const paramsTable = element.querySelector('table#methodsubtable');
 
         const params: { name: string, description: string, format: string }[] = []
@@ -121,7 +130,8 @@ async function scrapeModuleApiPage(page: Page, module: Module): Promise<ModuleWi
         }
 
         return {
-            module: currentModule,
+            moduleId: currentModule.id,
+            method,
             apiUrl,
             params,
         };
@@ -139,23 +149,36 @@ export async function runMainPageScraper() {
     const browser = await puppeteer.launch({ headless: false });
     const page = await browser.newPage();
 
-    const modules: Module[] = await scrapeMainPageModules(page);
+    const modules: RawModule[] = await scrapeMainPageModules(page);
+    log.info('> Persistindo módulos! <');
+    await persistFoundModules(modules);
+    const persistedModulesIds: TModule[] = await getPersistedModules();
 
-    let modulesWithApiData: ModuleWithApiData[] = [];
-    for (const module of modules) {
+    let modulesWithApiData: TModuleApiDataRaw[] = [];
+    for (const module of persistedModulesIds) {
         log.info(`> Processando módulo ${module.name}`);
+
+        if (!module.link) {
+            log.error({}, "Módulo não possui link persistido.");
+            continue;
+        }
+
         const url = new URL(module.link, MAIN_URL);
 
         await page.goto(url.toString());
-        const apiDataList: ModuleWithApiData[] = await scrapeModuleApiPage(page, module);
+        const apiDataList: TModuleApiDataRaw[] = await scrapeModuleApiPage(page, module);
+        const cleanApiDataList: TModuleApiDataRaw[] = apiDataList.filter((element) => {
+            if (!isExcludedEndpoint(element.apiUrl))
+                return element;
+        }).filter(Boolean);
 
         if (apiDataList && apiDataList.length > 0) {
-            modulesWithApiData.push(...apiDataList);
+            modulesWithApiData.push(...cleanApiDataList);
         }
     }
     await browser.close();
 
-    log.info('> Persistindo módulos! <');
-    await persistFoundModules(modules, modulesWithApiData);
+    log.info('> Persistindo dados da API dos módulos! <');
+    await persisTModuleApiDataRaw(modulesWithApiData);
     log.info('> Scraper finalizado! <');
 }
