@@ -605,3 +605,48 @@ export const ibgeRmpgMedicoesCustomizadas = mysqlTable("ibge_rmpg_medicoes_custo
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
 });
+
+export const ibgePublicacoes = mysqlTable("ibge_publicacoes", {
+  id: int("id").primaryKey(),
+  chave: int("chave"),
+  titulo: text("titulo").notNull(),
+  autor: text("autor"),
+  ano: varchar("ano", { length: 20 }),
+  link: text("link"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+
+export const ibgeRbmcRelatorios = mysqlTable("ibge_rbmc_relatorios", {
+  id: serial("id").primaryKey(),
+  estacao: varchar("estacao", { length: 20 }).notNull(),
+  url: text("url").notNull(),
+  contentType: varchar("content_type", { length: 100 }),
+  fileSize: int("file_size"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+
+export const ibgeRbmcArquivosRinex = mysqlTable("ibge_rbmc_arquivos_rinex", {
+  id: serial("id").primaryKey(),
+  estacao: varchar("estacao", { length: 20 }),
+  ano: int("ano"),
+  dia: int("dia"),
+  versaoRinex: varchar("versao_rinex", { length: 10 }),
+  url: text("url").notNull(),
+  contentType: varchar("content_type", { length: 100 }),
+  fileSize: int("file_size"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+
+export const ibgeRbmcOrbitasRinex = mysqlTable("ibge_rbmc_orbitas_rinex", {
+  id: serial("id").primaryKey(),
+  ano: int("ano").notNull(),
+  dia: int("dia").notNull(),
+  url: text("url").notNull(),
+  contentType: varchar("content_type", { length: 100 }),
+  fileSize: int("file_size"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});

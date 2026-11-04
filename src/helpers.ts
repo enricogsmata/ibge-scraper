@@ -57,7 +57,12 @@ export const EXCLUDED_ENDPOINT_RULES: ExclusionRule[] = [
         category: "PESQUISAS_REDUNDANT",
         reason: "Consulta unitária pontual redundante frente à listagem mestre /pesquisas",
         pattern: /^https?:\/\/servicodados\.ibge\.gov\.br\/api\/v1\/pesquisas\/\{pesquisas\}\/?$/i
-    }
+    },
+    {
+        category: "MALHAS_SVG_IMAGE",
+        reason: "Download direto de imagem vetorial/binária (SVG) de malha, persistir apenas metadados",
+        pattern: /^https?:\/\/servicodados\.ibge\.gov\.br\/api\/v4\/malhas\/(paises|regioes|estados|municipios|regioes-intermediarias|regioes-imediatas)\/\{[^}]+\}\/?$/i
+    },
 ];
 
 /**
@@ -176,13 +181,14 @@ const RAW_MAPPINGS: Array<[string, string]> = [
     ["https://servicodados.ibge.gov.br/api/v1/produtos/", "ibge_produtos_catalogo"],
     ["https://servicodados.ibge.gov.br/api/v1/produtos/estatisticas", "ibge_produtos_estatisticas"],
     ["https://servicodados.ibge.gov.br/api/v1/produtos/geociencias", "ibge_produtos_geociencias"],
+    ["https://servicodados.ibge.gov.br/api/v1/publicacoes/{produto}", "ibge_publicacoes"],
 
     // 14. RBMC (Rede Brasileira de Monitoramento Contínuo)
-    ["https://servicodados.ibge.gov.br/api/v1/rbmc/relatorio/{estacao}", "downloads/docs/ibge_rbmc_relatorios/"],
-    ["https://servicodados.ibge.gov.br/api/v1/rbmc/rinex2/{estacao}/{ano}/{dia}", "downloads/docs/ibge_rbmc_arquivos_rinex/"],
-    ["https://servicodados.ibge.gov.br/api/v1/rbmc/rinex3/{estacao}/{ano}/{dia}", "downloads/docs/ibge_rbmc_arquivos_rinex/"],
-    ["https://servicodados.ibge.gov.br/api/v1/rbmc/rinex3/1s/{estacao}/{ano}/{dia}/{hora}/{minuto}/{tipo}", "downloads/docs/ibge_rbmc_arquivos_rinex/"],
-    ["https://servicodados.ibge.gov.br/api/v1/rbmc/rinex3/orbitas/{ano}/{dia}", "downloads/docs/ibge_rbmc_arquivos_rinex/"],
+    ["https://servicodados.ibge.gov.br/api/v1/rbmc/relatorio/{estacao}", "ibge_rbmc_relatorios"],
+    ["https://servicodados.ibge.gov.br/api/v1/rbmc/rinex2/{estacao}/{ano}/{dia}", "ibge_rbmc_arquivos_rinex"],
+    ["https://servicodados.ibge.gov.br/api/v1/rbmc/rinex3/{estacao}/{ano}/{dia}", "ibge_rbmc_arquivos_rinex"],
+    ["https://servicodados.ibge.gov.br/api/v1/rbmc/rinex3/1s/{estacao}/{ano}/{dia}/{hora}/{minuto}/{tipo}", "ibge_rbmc_arquivos_rinex"],
+    ["https://servicodados.ibge.gov.br/api/v1/rbmc/rinex3/orbitas/{ano}/{dia}", "ibge_rbmc_orbitas_rinex"],
 
     // 15. RMPG (Rede Maregráfica Permanente)
     ["https://servicodados.ibge.gov.br/api/v1/rmpg/maregrafos", "ibge_rmpg_maregrafos"],
@@ -207,177 +213,3 @@ export const tableRoutes: RouteMapping[] = RAW_MAPPINGS.map(([template, tableNam
     tableName,
     pattern: compileTemplateToRegex(template)
 }));
-
-/**
- * Endpoints raiz (Entidades-Mãe / Dimensões): carga direta, sem parâmetros de rota ({...}).
- */
-export function hasRouteParams(url: string): boolean {
-    return /\{[^}]+\}/.test(url);
-}
-
-/**
- * Um endpoint é "raiz" quando não possui parâmetros de rota e não está nas regras de exclusão.
- * Cobre, entre outros: agregados, bdg/{local,situacao,tipo}, bngb/{listacategoria,listaclasse},
- * calendario, cnae/*, localidades/* (bases nacionais), metadados/pesquisas, censos/nomes/ranking,
- * noticias, pesquisas, produtos/*, rmpg/{maregrafos,sensores}.
- */
-export function isRootEndpoint(url: string): boolean {
-    const clean = url.trim();
-    return !hasRouteParams(clean) && !isExcludedEndpoint(clean);
-}
-
-/**
- * Endpoints cujo corpo é um envelope paginado ({ count, page, totalPages, items: [...] }).
- */
-export const PAGINATED_ROOT_PATTERNS: RegExp[] = [
-    /\/api\/v3\/calendario\/?$/i,
-    /\/api\/v3\/noticias\/?$/i,
-];
-
-export function isPaginatedEndpoint(url: string): boolean {
-    const clean = url.trim();
-    return PAGINATED_ROOT_PATTERNS.some(p => p.test(clean));
-}
-
-/**
- * Chave lógica do dataset bruto. Usa o mapeamento existente; se a URL não estiver
- * mapeada, deriva um slug do caminho (ex.: /api/v1/produtos -> ibge_v1_produtos).
- */
-export function getRootEndpointKey(url: string): string {
-    try {
-        return getTableNameFromUrl(url);
-    } catch {
-        const path = new URL(url.trim()).pathname
-            .replace(/^\/api\//, '')
-            .replace(/^\/+|\/+$/g, '')
-            .replace(/[^a-zA-Z0-9]+/g, '_')
-            .toLowerCase();
-        return `ibge_${path}`;
-    }
-}
-
-export function getTableNameFromUrl(url: string): string {
-    const cleanUrl = url.trim();
-    const match = tableRoutes.find(r => r.pattern.test(cleanUrl));
-    if (!match) {
-        throw new Error(`Nenhuma tabela mapeada para a URL: ${url}`);
-    }
-    return match.tableName;
-}
-
-// ---------------------------------------------------------------------------
-// Ordenação por dependência: mãe (nível 0) -> filho (1) -> neto (2) ...
-// ---------------------------------------------------------------------------
-
-const API_BASE = 'https://servicodados.ibge.gov.br/api';
-
-/**
- * Chave canônica de um endpoint/template: http -> https, placeholders {qualquer} -> {p},
- * sem barra final e sem query string. Permite casar URLs do banco com os templates abaixo
- * mesmo que o nome do placeholder varie.
- */
-export function normalizeEndpointKey(url: string): string {
-    return url
-        .trim()
-        .replace(/\?.*$/, '')
-        .replace(/^http:/i, 'https:')
-        .replace(/\{[^}]+\}/g, '{p}')
-        .replace(/\/+$/, '');
-}
-
-export function countRouteParams(url: string): number {
-    return (url.match(/\{[^}]+\}/g) ?? []).length;
-}
-
-/**
- * Grafo de dependências (filho -> pais): quais endpoints fornecem os valores usados
- * nos parâmetros de rota do filho. Caminhos relativos a /api. Endpoints sem parâmetros
- * são mães (nível 0) e não precisam constar aqui.
- */
-const LOC = 'v1/localidades';
-const PESQ = 'v1/pesquisas';
-const DEPENDENCY_EDGES: Array<[string, string[]]> = [
-    // Agregados (SIDRA)
-    ['v3/agregados/{a}/metadados', ['v3/agregados']],
-    ['v3/agregados/{a}/periodos/{p}/variaveis/{v}', ['v3/agregados/{a}/metadados']],
-
-    // Geodésia / nomes geográficos (siglas de UF vêm de localidades/estados)
-    ['v1/bdg/estado/{s}/estacoes', [`${LOC}/estados`]],
-    ['v1/bngb/uf/{s}/nomesgeograficos', [`${LOC}/estados`]],
-
-    // Malhas (metadados por entidade territorial)
-    ['v4/malhas/paises/{i}/metadados', [`${LOC}/paises`]],
-    ['v4/malhas/regioes/{i}/metadados', [`${LOC}/regioes`]],
-    ['v4/malhas/estados/{i}/metadados', [`${LOC}/estados`]],
-    ['v4/malhas/municipios/{i}/metadados', [`${LOC}/municipios`]],
-    ['v4/malhas/regioes-intermediarias/{i}/metadados', [`${LOC}/regioes-intermediarias`]],
-    ['v4/malhas/regioes-imediatas/{i}/metadados', [`${LOC}/regioes-imediatas`]],
-
-    // Metadados de pesquisas
-    ['v2/metadados/pesquisas/{p}/periodos', ['v2/metadados/pesquisas']],
-
-    // Países
-    ['v1/paises/{p}', [`${LOC}/paises`]],
-    ['v1/paises/{p}/indicadores/{i}', ['v1/paises/{p}', 'v1/paises/indicadores/{i}']],
-
-    // Pesquisas estatísticas
-    [`${PESQ}/{p}/periodos`, [PESQ]],
-    [`${PESQ}/{p}/indicadores/{i}`, [PESQ]],
-    [`${PESQ}/{p}/periodos/{x}/indicadores/{i}`, [`${PESQ}/{p}/periodos`]],
-    [`${PESQ}/{p}/indicadores/{i}/ranking`, [`${PESQ}/{p}/indicadores/{i}`]],
-    [`${PESQ}/{p}/periodos/{x}/indicadores/{i}/ranking`, [`${PESQ}/{p}/periodos/{x}/indicadores/{i}`]],
-    [`${PESQ}/-/indicadores/{i}/resultados/{l}`, [`${PESQ}/{p}/indicadores/{i}`, `${LOC}/municipios`]],
-    [`${PESQ}/-/periodos/{x}/indicadores/{i}/resultados/{l}`, [`${PESQ}/{p}/periodos/{x}/indicadores/{i}`, `${LOC}/municipios`]],
-    [`${PESQ}/{p}/indicadores/{i}/resultados/{l}`, [`${PESQ}/{p}/indicadores/{i}`, `${LOC}/municipios`]],
-    [`${PESQ}/{p}/periodos/{x}/indicadores/{i}/resultados/{l}`, [`${PESQ}/{p}/periodos/{x}/indicadores/{i}`, `${LOC}/municipios`]],
-    [`${PESQ}/{p}/resultados/{l}`, [PESQ, `${LOC}/municipios`]],
-
-    // RMPG (marégrafos e sensores)
-    ['v1/rmpg/previsao/{m}', ['v1/rmpg/maregrafos']],
-    ['v1/rmpg/nivel/{m}', ['v1/rmpg/maregrafos']],
-    ['v1/rmpg/meteorologia/{m}', ['v1/rmpg/maregrafos']],
-    ['v1/rmpg/customizado/{m}/{s}', ['v1/rmpg/maregrafos', 'v1/rmpg/sensores']],
-];
-
-const DEPENDENCY_PARENTS = new Map<string, string[]>(
-    DEPENDENCY_EDGES.map(([child, parents]) => [
-        normalizeEndpointKey(`${API_BASE}/${child}`),
-        parents.map(p => normalizeEndpointKey(`${API_BASE}/${p}`)),
-    ])
-);
-
-/** Pais declarados (chaves canônicas) de um endpoint; vazio se mãe ou sem dependência declarada. */
-export function getDependencyParents(url: string): string[] {
-    return DEPENDENCY_PARENTS.get(normalizeEndpointKey(url)) ?? [];
-}
-
-/**
- * Nível de dependência:
- *  - 0: mãe (sem parâmetros de rota);
- *  - 1 + maior nível entre os pais, quando há dependência declarada (filho = 1, neto = 2, ...);
- *  - fallback para endpoints com parâmetros sem dependência declarada (ex.: RBMC): nº de parâmetros.
- */
-export function getEndpointLevel(url: string, stack: string[] = []): number {
-    if (!hasRouteParams(url)) return 0;
-
-    const key = normalizeEndpointKey(url);
-    const parents = DEPENDENCY_PARENTS.get(key);
-    if (!parents || parents.length === 0) return countRouteParams(url);
-
-    if (stack.includes(key)) {
-        throw new Error(`Ciclo de dependência entre endpoints: ${[...stack, key].join(' -> ')}`);
-    }
-    return 1 + Math.max(...parents.map(p => getEndpointLevel(p, [...stack, key])));
-}
-
-export type OrderedEndpoint<T> = T & { level: number; originalIndex: number };
-
-/**
- * Ordena endpoints por nível (mães primeiro). Dentro do mesmo nível mantém a ordem original.
- * `originalIndex` preserva a posição em ModuleApiData (usada pelo debugIndex).
- */
-export function sortEndpointsByDependency<T extends { apiUrl: string }>(items: T[]): OrderedEndpoint<T>[] {
-    return items
-        .map((item, originalIndex) => ({ ...item, level: getEndpointLevel(item.apiUrl), originalIndex }))
-        .sort((a, b) => a.level - b.level || a.originalIndex - b.originalIndex);
-}
