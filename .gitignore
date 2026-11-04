@@ -3,3 +3,4 @@ package-lock.json
 src/db/normalized/out
 src/db/raw/out
 node_modules/
+src/temp.ts

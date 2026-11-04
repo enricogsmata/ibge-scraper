@@ -117,8 +117,12 @@ async function scrapeModuleApiPage(page: Page, module: TModule): Promise<TModule
                     }
 
                     const name = tds[0]?.textContent.trim() ?? '';
-                    const description = tds[0]?.querySelector('.description > p')?.textContent.trim() ?? '';
-                    const format = tds[1]?.querySelector('span.type')?.textContent.trim() ?? ''
+
+                    const descriptionElement = tds[1]?.querySelector('.inner.description.marked');
+
+                    const description = descriptionElement?.textContent?.trim() ?? '';
+
+                    const format = tds[1]?.querySelector('span.type')?.textContent?.trim() ?? '';
 
                     params.push({
                         name,

@@ -1,6 +1,7 @@
 {
   "type": "module",
   "dependencies": {
+    "axios": "^1.21.0",
     "dotenv": "^18.0.9",
     "drizzle-orm": "^0.45.4",
     "mysql2": "^3.24.6",
@@ -16,7 +17,6 @@
   },
   "scripts": {
     "raw:push": "cls && drizzle-kit push --config=drizzle.raw.config.ts",
-
     "git": "cls && git add . && git commit -m ",
     "i": "cls && npm run raw:push && tsx ./src/index.ts"
   }

@@ -46,9 +46,10 @@ const dbStream = new Writable({
         try {
             const obj = JSON.parse(chunk.toString());
             const levelName = LEVEL_NAMES[obj.level] || String(obj.level);
+            const msg = obj.msg ? obj.msg.slice(0, 65535) : '';
 
             await rawDb.insert(Logs).values({
-                message: obj.msg || '',
+                message: msg,
                 level: levelName,
                 module: obj.module || null,
                 context: typeof obj.context === 'object' ? JSON.stringify(obj.context) : obj.context || null,

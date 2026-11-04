@@ -1,50 +1,69 @@
-import { mysqlTable, serial, text, varchar, int, json, timestamp, bigint, double, primaryKey, boolean } from 'drizzle-orm/mysql-core';
+import { mysqlTable, serial, text, varchar, int, json, timestamp, bigint, double, primaryKey, boolean, uniqueIndex } from 'drizzle-orm/mysql-core';
 import { relations, type InferSelectModel, type InferInsertModel } from 'drizzle-orm';
 
 // Tabela principal: Module
 export const Modules = mysqlTable('module', {
-    id: serial('id').primaryKey(),
-    name: varchar('name', { length: 255 }).notNull(),
-    description: text('description'),
-    link: text('link'),
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  description: text('description'),
+  link: text('link'),
 });
 
 // Tipagem dos parâmetros da API
 export type ApiParam = {
-    name: string;
-    description: string;
-    format: string;
+  name: string;
+  description: string;
+  format: string;
 };
 
 // Tabela relacionada: ModuleApiData
 export const ModuleApiData = mysqlTable('module_api_data', {
-    id: serial('id').primaryKey(),
-    moduleId: bigint('module_id', { mode: 'number', unsigned: true })
-        .notNull()
-        .references(() => Modules.id, { onDelete: 'cascade' }),
-    apiUrl: text('api_url').notNull(),
-    method: varchar('method', { length: 4 }).notNull(),
-    params: json('params').$type<ApiParam[]>().notNull(),
+  id: serial('id').primaryKey(),
+  moduleId: bigint('module_id', { mode: 'number', unsigned: true })
+    .notNull()
+    .references(() => Modules.id, { onDelete: 'cascade' }),
+  apiUrl: text('api_url').notNull(),
+  method: varchar('method', { length: 4 }).notNull(),
+  params: json('params').$type<ApiParam[]>().notNull(),
 });
 
 // Definição das relações (útil para consultas com db.query)
 export const ModulesRelations = relations(Modules, ({ many }) => ({
-    apiData: many(ModuleApiData),
+  apiData: many(ModuleApiData),
 }));
 
 export const ModuleApiDataRelations = relations(ModuleApiData, ({ one }) => ({
-    module: one(Modules, {
-        fields: [ModuleApiData.moduleId],
-        references: [Modules.id],
-    }),
+  module: one(Modules, {
+    fields: [ModuleApiData.moduleId],
+    references: [Modules.id],
+  }),
 }));
 
+/**
+ * Resposta bruta (sem transformação de chaves) dos endpoints raiz (sem parâmetros de rota).
+ * Uma linha por (endpoint, página). Endpoints não paginados usam sempre page = 1.
+ * Reexecuções fazem upsert pela chave única (api_url, page).
+ */
+export const RawRootResponses = mysqlTable('raw_root_responses', {
+  id: serial('id').primaryKey(),
+  endpointKey: varchar('endpoint_key', { length: 150 }).notNull(),
+  apiUrl: varchar('api_url', { length: 400 }).notNull(),
+  page: int('page').notNull().default(1),
+  totalPages: int('total_pages'),
+  httpStatus: int('http_status').notNull(),
+  recordCount: int('record_count').notNull(),
+  payload: json('payload').notNull(),
+  fetchedAt: timestamp('fetched_at').defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('uq_raw_root_url_page').on(table.apiUrl, table.page),
+]);
+
 export const Logs = mysqlTable('logs', {
-    message: text(),
-    level: text(),
-    module: text(),
-    context: text(),
-    timestamp: timestamp(),
+  message: text(),
+  level: text(),
+  module: text(),
+  context: text(),
+  timestamp: timestamp(),
 });
 
 export interface AgregadoItem {
@@ -53,7 +72,7 @@ export interface AgregadoItem {
 }
 
 export const ibgeAgregados = mysqlTable("ibge_agregados", {
-  id: serial("id").primaryKey(),
+  id: varchar("id", { length: 50 }).primaryKey(),
   nome: text("nome").notNull(),
   agregados: json("agregados").$type<AgregadoItem[]>().notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
