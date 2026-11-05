@@ -6,6 +6,6 @@ export default defineConfig({
     schema: "./src/db/normalized/schema.ts",
     out: "./src/db/normalized/out",
     dbCredentials: {
-        url: process.env.DATABASE_URL || ''
+        url: process.env.NORMALIZED_DATABASE_URL || ''
     }
 })
