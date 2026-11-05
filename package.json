@@ -17,7 +17,8 @@
   },
   "scripts": {
     "raw:push": "cls && drizzle-kit push --config=drizzle.raw.config.ts",
+    "db:push": "cls && drizzle-kit push --config=drizzle.config.ts",
     "git": "cls && git add . && git commit -m ",
-    "i": "cls && npm run raw:push && tsx ./src/index.ts"
+    "i": "cls && npm run raw:push && npm run db:push && tsx ./src/index.ts"
   }
 }
