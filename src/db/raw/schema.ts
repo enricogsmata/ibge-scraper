@@ -650,3 +650,10 @@ export const ibgeRbmcOrbitasRinex = mysqlTable("ibge_rbmc_orbitas_rinex", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
 });
+
+export const ibgeIdentificadores = mysqlTable("ibge_identificadores", {
+  id: varchar("id", { length: 255 }).primaryKey(),
+  description: text(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});

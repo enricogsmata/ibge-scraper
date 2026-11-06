@@ -1,7 +1,12 @@
-import { sql } from 'drizzle-orm';
+import { sql, isNotNull } from 'drizzle-orm';
 import { rawDb } from './db/raw/connection.js';
 import { RawRootResponses } from './db/raw/schema.js';
 import { logger } from './logger.js';
+import { runSilverPhase1 } from './silver.js';
+import { normalizedDb } from './db/normalized/connection.js';
+import { silverLocalidadesRegioesIntermediarias } from './db/normalized/schema.js';
+import { silverMetadadosPesquisas } from './db/normalized/schema.js';
+import { silverLocalidadesEstados } from './db/normalized/schema.js';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -50,12 +55,12 @@ async function ingestEndpoint(endpointKey: string, baseUrl: string) {
     // Assim, se uma página específica (ex: 142) falhar, o loop não é abortado e tenta a 143.
     while (currentPage <= totalPages) {
         const urlObj = new URL(baseUrl);
-        
+
         // Adiciona o parâmetro dinâmico apenas se soubermos que é paginado ou se passou da página 1
         if (currentPage > 1 || isPaginated) {
             urlObj.searchParams.set('page', currentPage.toString());
         }
-        
+
         const currentUrl = urlObj.toString();
 
         try {
@@ -73,7 +78,7 @@ async function ingestEndpoint(endpointKey: string, baseUrl: string) {
             if (data && typeof data === 'object' && 'items' in data) {
                 isPaginated = true;
                 recordCount = Array.isArray(data.items) ? data.items.length : 0;
-                
+
                 // Atualiza o teto do loop com a resposta oficial da API
                 if (data.totalPages) {
                     totalPages = data.totalPages;
@@ -146,7 +151,7 @@ export async function runPhase2() {
         if (!firstParam) continue;
 
         const parameterName = firstParam.name.replace('*', '');
-        const parentKeys = await fetchParentKeysFromBronzeLayer(parameterName);
+        const parentKeys = await fetchParentKeysFromSilverLayer(endpoint.apiUrl, parameterName);
 
         if (parentKeys.length === 0) {
             logger.warn({ parameterName, endpoint: endpoint.apiUrl }, "Nenhuma chave pai encontrada. Pulando endpoint.");
@@ -176,8 +181,33 @@ export async function runPhase2() {
     logger.info("Fase 2 concluída com sucesso.");
 }
 
-async function fetchParentKeysFromBronzeLayer(paramName: string): Promise<string[]> {
-    return ["33", "35"];
+async function fetchParentKeysFromSilverLayer(apiUrl: string, paramName: string): Promise<string[]> {
+    if (apiUrl.includes('/malhas/regioes-intermediarias/') && paramName === 'id') {
+        const records = await normalizedDb
+            .select({ id: silverLocalidadesRegioesIntermediarias.id })
+            .from(silverLocalidadesRegioesIntermediarias);
+
+        return records.map((r) => String(r.id));
+    }
+
+    if (apiUrl.includes('/metadados/pesquisas/') && paramName === 'pesquisa') {
+        const records = await normalizedDb
+            .select({ codigo: silverMetadadosPesquisas.codigo })
+            .from(silverMetadadosPesquisas);
+
+        return records.map((r) => String(r.codigo));
+    }
+
+    if (apiUrl.includes('/bdg/estado/') && paramName === 'sigla') {
+        const records = await normalizedDb
+            .select({ sigla: silverLocalidadesEstados.sigla })
+            .from(silverLocalidadesEstados)
+            .where(isNotNull(silverLocalidadesEstados.sigla));
+
+        return records.map((r) => String(r.sigla));
+    }
+
+    return [];
 }
 
 /**
@@ -188,6 +218,7 @@ export async function runIngestionPipeline() {
     try {
         logger.info("Iniciando pipeline de ingestão ELT...");
         await runPhase1();
+        await runSilverPhase1();
         await runPhase2();
         logger.info("Pipeline de ingestão finalizado com sucesso.");
     } catch (error) {

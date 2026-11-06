@@ -1,7 +1,7 @@
 import puppeteer, { ElementHandle, Page } from "puppeteer";
 import { logger } from "./logger.js";
 import { rawDb } from "./db/raw/connection.js";
-import { ModuleApiData, Modules } from "./db/raw/schema.js";
+import { ibgeIdentificadores, ModuleApiData, Modules } from "./db/raw/schema.js";
 import { eq, sql } from "drizzle-orm";
 import { TModule, TModuleApiDataRaw } from "./db/raw/types.js";
 import { isExcludedEndpoint } from "./helpers.js";
@@ -146,6 +146,53 @@ async function scrapeModuleApiPage(page: Page, module: TModule): Promise<TModule
     return foundModulesApiData ?? [];
 }
 
+async function scrapeIndicadores(page: Page) {
+    const log = baseLogger.forMethod('scrapeIndicadores');
+
+    try {
+        // 1. Aguarda e seleciona o valor 'I' (dispara o evento 'change' nativo)
+        await page.waitForSelector('select.ACERVO-select', { timeout: 30000 });
+        await page.select('select.ACERVO-select', 'I');
+
+        // 2. Aguarda até que os labels dentro de #ACERVO-I estejam visíveis no DOM
+        await page.waitForSelector('div#ACERVO-I label', { visible: true, timeout: 30000 });
+
+        // 3. Itera diretamente sobre cada <label> da lista de indicadores
+        const foundIdentificadores = await page.$$eval('div#ACERVO-I label', (labels) => {
+            return labels.map((label) => {
+                const idSpan = label.querySelector('span[class^="iden"]');
+                const id = idSpan?.textContent?.trim() ?? '';
+
+                // Remove o ID e o separador " - " do texto completo para obter só a descrição limpa
+                const fullText = label.textContent?.trim() ?? '';
+                const description = fullText.replace(id, '').replace(/^[\s-]+/, '').trim();
+
+                return {
+                    id,
+                    description: description || fullText,
+                };
+            }).filter(item => item.id.length > 0);
+        });
+
+        if (!foundIdentificadores || foundIdentificadores.length === 0) {
+            throw new Error("Não foram encontrados identificadores válidos!");
+        }
+
+        await rawDb
+            .insert(ibgeIdentificadores)
+            .values(foundIdentificadores)
+            .onDuplicateKeyUpdate({
+                set: {
+                    updatedAt: sql`NOW()`,
+                }
+            });
+
+        log.info(`Sucesso: ${foundIdentificadores.length} indicadores extraídos e inseridos.`);
+    } catch (error) {
+        log.error({ error }, `Falha durante a extração do select de indicadores.`);
+    }
+}
+
 export async function runMainPageScraper() {
     const log = baseLogger.forMethod('mainPageScraperOrchestrator');
     log.info('> Iniciando scraping da página principal... <');
@@ -167,9 +214,13 @@ export async function runMainPageScraper() {
             continue;
         }
 
-        const url = new URL(module.link, MAIN_URL);
+        const url = new URL(module.link, MAIN_URL).toString();
 
-        await page.goto(url.toString());
+        await page.goto(url);
+
+        if (url.includes('https://servicodados.ibge.gov.br/api/docs/paises'))
+            await scrapeIndicadores(page);
+
         const apiDataList: TModuleApiDataRaw[] = await scrapeModuleApiPage(page, module);
         const cleanApiDataList: TModuleApiDataRaw[] = apiDataList.filter((element) => {
             if (!isExcludedEndpoint(element.apiUrl))
