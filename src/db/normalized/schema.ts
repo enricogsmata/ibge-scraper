@@ -654,6 +654,7 @@ export const silverPesquisasResultados = mysqlTable('silver_pesquisas_resultados
     transformedAt: timestamp('transformed_at').defaultNow().notNull(),
 }, (table) => [
     primaryKey({
+        name: 'sp_resultados_pk',
         columns: [
             table.pesquisaCodigo,
             table.indicadorId,
@@ -744,6 +745,7 @@ export const silverMalhasMunicipiosRegioesLimitrofes = mysqlTable(
         }).onDelete('cascade'),
 
         primaryKey({
+            name: 'sm_mun_reg_lim_pk',
             columns: [table.municipioId, table.ordem],
         }),
     ],
@@ -830,6 +832,7 @@ export const silverMalhasRegioesImediatasRegioesLimitrofes = mysqlTable(
         }).onDelete('cascade'),
 
         primaryKey({
+            name: 'sm_reg_ime_reg_lim_pk',
             columns: [table.regiaoImediataId, table.ordem],
         }),
     ],
@@ -873,6 +876,7 @@ export const silverMalhasRegioesIntermediariasRegioesLimitrofes = mysqlTable(
         }).onDelete('cascade'),
 
         primaryKey({
+            name: 'sm_reg_int_reg_lim_pk',
             columns: [table.regiaoIntermediariaId, table.ordem],
         }),
     ],

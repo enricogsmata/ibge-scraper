@@ -26,6 +26,16 @@ import { createHash } from 'node:crypto';
 
 const logger = baseLogger.forModule('ingestion');
 
+// Modo de debug: executa somente a primeira combinação válida por endpoint.
+const DEBUG_SINGLE_VALID_COMBINATION =
+    process.env.INGESTION_DEBUG_SINGLE_VALID === 'true';
+
+// Endpoints que já encontraram uma combinação com dados.
+const debugCompletedEndpoints = new Set<string>();
+
+// Fila para impedir que combinações do mesmo endpoint sejam executadas em paralelo.
+const debugEndpointQueues = new Map<string, Promise<boolean>>();
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function ingestRbmcRinex31s(endpointApiUrl: string) {
@@ -1176,6 +1186,62 @@ async function ingestEndpoint(
     endpointKey: string,
     baseUrl: string
 ): Promise<boolean> {
+    // Fora do debug, mantém o comportamento normal.
+    if (!DEBUG_SINGLE_VALID_COMBINATION) {
+        return ingestEndpointInternal(endpointKey, baseUrl, false);
+    }
+
+    // Se já encontramos uma combinação válida, não precisamos testar outras.
+    if (debugCompletedEndpoints.has(endpointKey)) {
+        return Promise.resolve(false);
+    }
+
+    // Recupera a última execução desse endpoint.
+    const previousExecution =
+        debugEndpointQueues.get(endpointKey) ?? Promise.resolve(false);
+
+    // Encadeia a próxima combinação, garantindo execução sequencial.
+    const currentExecution = previousExecution
+        .catch(() => false)
+        .then(async () => {
+            if (debugCompletedEndpoints.has(endpointKey)) {
+                return false;
+            }
+
+            logger.info({
+                endpointKey,
+                url: baseUrl.slice(0, 250),
+            }, 'DEBUG: testando combinação do endpoint.');
+
+            const hasData = await ingestEndpointInternal(
+                endpointKey,
+                baseUrl,
+                true
+            );
+
+            if (hasData) {
+                debugCompletedEndpoints.add(endpointKey);
+
+                logger.info({
+                    endpointKey,
+                    url: baseUrl.slice(0, 250),
+                }, 'DEBUG: combinação válida encontrada. Demais combinações serão ignoradas.');
+            }
+
+            return hasData;
+        });
+
+    debugEndpointQueues.set(endpointKey, currentExecution);
+
+    return currentExecution;
+}
+
+
+async function ingestEndpointInternal(
+    endpointKey: string,
+    baseUrl: string,
+    debugOnly = false
+): Promise<boolean> {
     let currentPage = 1;
     let totalPages = 1;
     let isPaginated = false;
@@ -1192,7 +1258,7 @@ async function ingestEndpoint(
 
         let response: { status: number; data: any };
 
-        // 1. Extração: erros HTTP são tratados separadamente
+        // EXTRAÇÃO
         try {
             response = await fetchWithBackoff(currentUrl);
         } catch (error) {
@@ -1203,6 +1269,9 @@ async function ingestEndpoint(
                 ...describeError(error),
             }, 'Falha ao extrair página do IBGE.');
 
+            // Em debug, uma falha nessa combinação permite testar a próxima.
+            if (debugOnly) return false;
+
             currentPage++;
             continue;
         }
@@ -1210,32 +1279,58 @@ async function ingestEndpoint(
         const { status, data } = response;
 
         if (!data) {
+            if (debugOnly) return false;
+
             currentPage++;
             continue;
         }
 
         let recordCount = 0;
-        let nextTotalPages = totalPages;
-        let nextIsPaginated: any = isPaginated;
 
-        if (data && typeof data === 'object' && 'items' in data) {
-            nextIsPaginated = true;
+        if (
+            typeof data === 'object' &&
+            data !== null &&
+            'items' in data
+        ) {
+            isPaginated = true;
 
             recordCount = Array.isArray(data.items)
                 ? data.items.length
                 : 0;
 
             if (data.totalPages) {
-                nextTotalPages = data.totalPages;
+                totalPages = data.totalPages;
             }
         } else {
             recordCount = Array.isArray(data) ? data.length : 1;
-            nextTotalPages = 1;
+            totalPages = 1;
         }
 
-        // 2. Mede o tamanho real da resposta, não o tamanho da URL
+        // Verifica se a resposta realmente possui dados.
+        const hasValidData = Array.isArray(data)
+            ? data.length > 0
+            : typeof data === 'object' && data !== null && 'items' in data
+                ? Array.isArray(data.items) && data.items.length > 0
+                : typeof data === 'object' && data !== null
+                    ? Object.keys(data).length > 0
+                    : data !== null && data !== undefined;
+
+        // No debug, respostas vazias não contam como combinações válidas.
+        if (debugOnly && !hasValidData) {
+            logger.info({
+                endpointKey,
+                page: currentPage,
+            }, 'DEBUG: combinação sem dados. Testando próxima combinação.');
+
+            return false;
+        }
+
         const serializedPayload = JSON.stringify(data);
-        const payloadSizeBytes = Buffer.byteLength(serializedPayload, 'utf8');
+        const payloadSizeBytes = Buffer.byteLength(
+            serializedPayload,
+            'utf8'
+        );
+
         const payloadSizeMB = Number(
             (payloadSizeBytes / 1024 / 1024).toFixed(2)
         );
@@ -1246,13 +1341,13 @@ async function ingestEndpoint(
             recordCount,
             payloadSizeBytes,
             payloadSizeMB,
-        }, 'Resposta recebida e tamanho do payload calculado.');
+        }, 'Tamanho da resposta calculado.');
 
         const apiUrlHash = createHash('sha256')
             .update(currentUrl)
             .digest('hex');
 
-        // 3. Persistência: falha no banco NÃO deve avançar a página
+        // PERSISTÊNCIA
         try {
             await rawDb.insert(RawRootResponses)
                 .values({
@@ -1260,7 +1355,7 @@ async function ingestEndpoint(
                     apiUrl: currentUrl,
                     apiUrlHash,
                     page: currentPage,
-                    totalPages: nextTotalPages,
+                    totalPages,
                     httpStatus: status,
                     recordCount,
                     payload: data,
@@ -1273,9 +1368,13 @@ async function ingestEndpoint(
                         fetchedAt: sql`CURRENT_TIMESTAMP`,
                     },
                 });
+
+            hasInserted = true;
+
         } catch (error) {
-            // Não usar o logger aqui: ele também pode depender do banco.
-            console.error('[INGESTION] Falha ao persistir resposta recebida:', {
+            // Não depender do logger conectado ao banco para registrar
+            // uma falha de persistência no próprio banco.
+            console.error('[INGESTION] Falha ao persistir resposta:', {
                 endpointKey,
                 page: currentPage,
                 payloadSizeMB,
@@ -1284,19 +1383,9 @@ async function ingestEndpoint(
                 error: describeError(error),
             });
 
-            // Interrompe esta ingestão. Não avança para a próxima página
-            // e não descarta silenciosamente a resposta que já foi recebida.
-            throw new Error(
-                `Falha ao persistir página ${currentPage} de ${endpointKey}. ` +
-                `Payload: ${payloadSizeMB} MB.`,
-                { cause: error }
-            );
+            // Não avançar nem marcar a combinação como concluída.
+            throw error;
         }
-
-        // Só atualiza o estado da paginação depois da gravação bem-sucedida.
-        hasInserted = true;
-        totalPages = nextTotalPages;
-        isPaginated = nextIsPaginated;
 
         currentPage++;
     }
