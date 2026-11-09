@@ -35,6 +35,7 @@ import { transformCnaeSubclasses } from './silver/cnaeSubclasses.js';
 import { transformAgregados } from './silver/agregados.js';
 import { transformAgregadosMetadados } from './silver/agregadosMetadados.js';
 import { transformCalendario } from './silver/calendario.js';
+import { transformBdgEstacoes } from './silver/bdgEstacoes.js';
 
 /**
  * ORQUESTRADOR DA CAMADA SILVER (FASE 1)
@@ -83,6 +84,30 @@ export async function runSilverPhase1() {
         logger.info("Processamento da camada Silver (Fase 1) concluído.");
     } catch (error) {
         logger.error({ error: (error as Error).message }, "Falha durante o processamento da camada Silver.");
+        throw error;
+    }
+}
+
+export async function runSilverPhase2() {
+    logger.info("Iniciando processamento da camada Silver (Fase 2 - Geral)");
+
+    try {
+        // Módulos futuros da camada Silver Fase 2
+        logger.info("Processamento da camada Silver (Fase 2 - Geral) concluído.");
+    } catch (error) {
+        logger.error({ error: (error as Error).message }, "Falha durante o processamento da camada Silver (Fase 2 - Geral).");
+        throw error;
+    }
+}
+
+export async function runSilverBdgEstacoes() {
+    logger.info("Iniciando processamento Silver específico: bdgEstacoes");
+
+    try {
+        await transformBdgEstacoes();
+        logger.info("Processamento Silver de bdgEstacoes concluído.");
+    } catch (error) {
+        logger.error({ error: (error as Error).message }, "Falha durante o processamento Silver de bdgEstacoes.");
         throw error;
     }
 }
