@@ -47,7 +47,8 @@ export const ModuleApiDataRelations = relations(ModuleApiData, ({ one }) => ({
 export const RawRootResponses = mysqlTable('raw_root_responses', {
   id: serial('id').primaryKey(),
   endpointKey: varchar('endpoint_key', { length: 150 }).notNull(),
-  apiUrl: varchar('api_url', { length: 400 }).notNull(),
+  apiUrl: text('api_url').notNull(),
+  apiUrlHash: varchar('api_url_hash', { length: 64 }).notNull(),
   page: int('page').notNull().default(1),
   totalPages: int('total_pages'),
   httpStatus: int('http_status').notNull(),
@@ -55,7 +56,7 @@ export const RawRootResponses = mysqlTable('raw_root_responses', {
   payload: json('payload').notNull(),
   fetchedAt: timestamp('fetched_at').defaultNow().notNull(),
 }, (table) => [
-  uniqueIndex('uq_raw_root_url_page').on(table.apiUrl, table.page),
+  uniqueIndex('uq_raw_root_url_page').on(table.apiUrlHash, table.page),
 ]);
 
 export const Logs = mysqlTable('logs', {
@@ -63,6 +64,7 @@ export const Logs = mysqlTable('logs', {
   level: text(),
   module: text(),
   context: text(),
+  data: json('data'),
   timestamp: timestamp(),
 });
 

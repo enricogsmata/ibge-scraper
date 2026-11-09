@@ -40,6 +40,8 @@ const LEVEL_NAMES: Record<number, string> = {
     60: 'fatal',
 };
 
+const MAX_LOG_CHARS = 10_000;
+
 // Stream direto no banco via Drizzle
 const dbStream = new Writable({
     async write(chunk, _encoding, callback) {
@@ -48,11 +50,29 @@ const dbStream = new Writable({
             const levelName = LEVEL_NAMES[obj.level] || String(obj.level);
             const msg = obj.msg ? obj.msg.slice(0, 65535) : '';
 
+            const {
+                msg: _m,
+                level: _l,
+                time: _t,
+                module: mod,
+                context: ctx,
+                pid: _p,
+                hostname: _h,
+                ...extra
+            } = obj;
+
+            const rawLogData = extra.data !== undefined ? extra.data : (Object.keys(extra).length > 0 ? extra : null);
+            const dataStr = rawLogData == null ? null : JSON.stringify(rawLogData);
+            const safeData = dataStr && dataStr.length > MAX_LOG_CHARS
+                ? { truncated: true, originalChars: dataStr.length, preview: dataStr.slice(0, MAX_LOG_CHARS) }
+                : rawLogData;
+
             await rawDb.insert(Logs).values({
                 message: msg,
                 level: levelName,
-                module: obj.module || null,
-                context: typeof obj.context === 'object' ? JSON.stringify(obj.context) : obj.context || null,
+                module: (mod as string) || (extra.module as string) || null,
+                context: typeof ctx === 'object' ? JSON.stringify(ctx) : (ctx as string) || (extra.context as string) || null,
+                data: safeData,
                 timestamp: new Date(obj.time),
             });
         } catch (err) {
@@ -66,10 +86,10 @@ const dbStream = new Writable({
 // Configura stream do console com pino-pretty em dev
 const consoleStream = isDev
     ? pinoPretty({
-          colorize: true,
-          translateTime: 'yyyy-mm-dd HH:MM:ss',
-          ignore: 'pid,hostname',
-      })
+        colorize: true,
+        translateTime: 'yyyy-mm-dd HH:MM:ss',
+        ignore: 'pid,hostname',
+    })
     : process.stdout;
 
 // Combina terminal formatado com stream do banco

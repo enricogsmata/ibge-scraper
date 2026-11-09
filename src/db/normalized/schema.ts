@@ -1,5 +1,5 @@
 // src/db/normalized/schema.ts
-import { mysqlTable, varchar, text, json, timestamp, uniqueIndex, serial, int, boolean, foreignKey, bigint, double } from 'drizzle-orm/mysql-core';
+import { mysqlTable, varchar, text, json, timestamp, uniqueIndex, serial, int, boolean, foreignKey, bigint, double, primaryKey } from 'drizzle-orm/mysql-core';
 
 export const silverMetadadosPesquisas = mysqlTable('silver_metadados_pesquisas', {
     codigo: varchar('codigo', { length: 50 }).primaryKey(),
@@ -321,6 +321,7 @@ export const silverPesquisasPeriodos = mysqlTable('silver_pesquisas_periodos', {
     publicacao: varchar('publicacao', { length: 50 }),
     fonte: json('fonte').$type<string[]>(),
     nota: json('nota').$type<string[]>(),
+    transformedAt: timestamp('transformed_at').defaultNow().notNull(),
 }, (table) => [
     foreignKey({
         name: 'fk_silver_pesq_per_id',
@@ -472,14 +473,14 @@ export const silverAgregadosMetadadosVariaveis = mysqlTable('silver_agregados_me
     agregadoId: int('agregado_id').notNull(),
     nome: text('nome').notNull(),
     unidade: text('unidade'),
-    sumarizacao: json('sumarizacao').$type<string[]>(),
+    sumarizacao: json('sumarizacao').$type<unknown[]>(),
 }, (table) => [
     foreignKey({
         name: 'fk_silver_agr_meta_var_id',
         columns: [table.agregadoId],
-        foreignColumns: [silverAgregadosMetadados.id]
+        foreignColumns: [silverAgregadosMetadados.id],
     }).onDelete('cascade'),
-    uniqueIndex('uq_agr_meta_var_agr_id').on(table.agregadoId, table.id)
+    uniqueIndex('uq_agr_meta_var_agr_id').on(table.agregadoId, table.id),
 ]);
 
 export const silverAgregadosMetadadosClassificacoes = mysqlTable('silver_agregados_metadados_classificacoes', {
@@ -491,9 +492,9 @@ export const silverAgregadosMetadadosClassificacoes = mysqlTable('silver_agregad
     foreignKey({
         name: 'fk_silver_agr_meta_cls_id',
         columns: [table.agregadoId],
-        foreignColumns: [silverAgregadosMetadados.id]
+        foreignColumns: [silverAgregadosMetadados.id],
     }).onDelete('cascade'),
-    uniqueIndex('uq_agr_meta_cls_agr_id').on(table.agregadoId, table.id)
+    uniqueIndex('uq_agr_meta_cls_agr_id').on(table.agregadoId, table.id),
 ]);
 
 export const silverAgregadosMetadadosCategorias = mysqlTable('silver_agregados_metadados_categorias', {
@@ -507,9 +508,9 @@ export const silverAgregadosMetadadosCategorias = mysqlTable('silver_agregados_m
     foreignKey({
         name: 'fk_silver_agr_meta_cat_agr_id',
         columns: [table.agregadoId],
-        foreignColumns: [silverAgregadosMetadados.id]
+        foreignColumns: [silverAgregadosMetadados.id],
     }).onDelete('cascade'),
-    uniqueIndex('uq_agr_meta_cat_cls_id').on(table.agregadoId, table.classificacaoId, table.id)
+    uniqueIndex('uq_agr_meta_cat_cls_id').on(table.agregadoId, table.classificacaoId, table.id),
 ]);
 
 export const silverCalendario = mysqlTable('silver_calendario', {
@@ -578,3 +579,345 @@ export const silverBdgEstacoes = mysqlTable('silver_bdg_estacoes', {
     ufNome: varchar('uf_nome', { length: 100 }),
     transformedAt: timestamp('transformed_at').defaultNow().notNull(),
 });
+
+export const silverMetadadosPesquisasPeriodos = mysqlTable('silver_metadados_pesquisas_periodos', {
+    id: serial('id').primaryKey(),
+    pesquisaCodigo: varchar('pesquisa_codigo', { length: 50 }).notNull(),
+    ano: int('ano').notNull(),
+    mes: int('mes').notNull(),
+    ordemPeriodo: int('ordem_periodo').notNull(),
+    nomeOcorrencia: text('nome_ocorrencia'),
+    nomeOcorrenciaIngles: text('nome_ocorrencia_ingles'),
+    transformedAt: timestamp('transformed_at').defaultNow().notNull(),
+}, (table) => [
+    foreignKey({
+        name: 'fk_silver_meta_pesq_per_cod',
+        columns: [table.pesquisaCodigo],
+        foreignColumns: [silverMetadadosPesquisas.codigo]
+    }).onDelete('cascade'),
+    uniqueIndex('uq_meta_pesq_periodo').on(table.pesquisaCodigo, table.ano, table.mes, table.ordemPeriodo)
+]);
+
+export const silverPublicacoes = mysqlTable('silver_publicacoes', {
+    id: serial('id').primaryKey(),
+    produtoId: int('produto_id').notNull(),
+    chave: int('chave').notNull(),
+    publicacaoId: int('publicacao_id'),
+    titulo: text('titulo').notNull(),
+    autor: text('autor'),
+    ano: varchar('ano', { length: 50 }),
+    link: text('link'),
+    classificacao: varchar('classificacao', { length: 150 }),
+    nomenclatura: varchar('nomenclatura', { length: 150 }),
+    transformedAt: timestamp('transformed_at').defaultNow().notNull(),
+}, (table) => [
+    foreignKey({
+        name: 'fk_silver_pub_prod_id',
+        columns: [table.produtoId],
+        foreignColumns: [silverProdutos.id]
+    }).onDelete('cascade'),
+    uniqueIndex('uq_silver_pub_prod_chave').on(table.produtoId, table.chave)
+]);
+
+export const silverBngbNomesGeograficos = mysqlTable('silver_bngb_nomes_geograficos', {
+    idNomeBngb: int('id_nome_bngb').primaryKey(),
+    nomeGeografico: text('nome_geografico').notNull(),
+    geocodigo: varchar('geocodigo', { length: 50 }),
+    termoGenerico: varchar('termo_generico', { length: 100 }),
+    termoEspecifico: text('termo_especifico'),
+    conectivo: varchar('conectivo', { length: 20 }),
+    categoria: varchar('categoria', { length: 100 }),
+    classe: varchar('classe', { length: 100 }),
+    escalaOcorrencia: varchar('escala_ocorrencia', { length: 100 }),
+    escalaOrigemGeometria: varchar('escala_origem_geometria', { length: 50 }),
+    statusValidacao: varchar('status_validacao', { length: 10 }),
+    nivelValidacao: varchar('nivel_validacao', { length: 50 }),
+    sustentacaoValidacao: text('sustentacao_validacao'),
+    dataValidacao: varchar('data_validacao', { length: 50 }),
+    latitude: double('latitude'),
+    longitude: double('longitude'),
+    latitudeGms: varchar('latitude_gms', { length: 50 }),
+    longitudeGms: varchar('longitude_gms', { length: 50 }),
+    dataPublicacao: varchar('data_publicacao', { length: 50 }),
+    geometryType: varchar('geometry_type', { length: 50 }),
+    geometry: json('geometry'),
+    transformedAt: timestamp('transformed_at').defaultNow().notNull(),
+});
+
+export const silverPesquisasResultados = mysqlTable('silver_pesquisas_resultados', {
+    pesquisaCodigo: varchar('pesquisa_codigo', { length: 50 }).notNull(),
+    indicadorId: bigint('indicador_id', { mode: 'number' }).notNull(),
+    localidade: varchar('localidade', { length: 50 }).notNull(),
+    ano: int('ano').notNull(),
+    valor: varchar('valor', { length: 100 }),
+    nota: text('nota'),
+    transformedAt: timestamp('transformed_at').defaultNow().notNull(),
+}, (table) => [
+    primaryKey({
+        columns: [
+            table.pesquisaCodigo,
+            table.indicadorId,
+            table.localidade,
+            table.ano,
+        ],
+    }),
+]);
+
+export const silverMalhasEstadosMetadados = mysqlTable(
+    'silver_malhas_estados_metadados',
+    {
+        id: varchar('id', { length: 2 }).primaryKey(),
+        nome: text('nome').notNull(),
+
+        areaDimensao: double('area_dimensao'),
+        areaUnidadeId: varchar('area_unidade_id', { length: 20 }),
+        areaUnidadeNome: text('area_unidade_nome'),
+
+        centroideLatitude: double('centroide_latitude'),
+        centroideLongitude: double('centroide_longitude'),
+
+        nivelGeografico: text('nivel_geografico'),
+
+        transformedAt: timestamp('transformed_at')
+            .defaultNow()
+            .notNull(),
+    },
+);
+
+export const silverMalhasEstadosRegioesLimitrofes = mysqlTable(
+    'silver_malhas_estados_regioes_limitrofes',
+    {
+        estadoId: varchar('estado_id', { length: 2 }).notNull(),
+        ordem: int('ordem').notNull(),
+
+        latitude: double('latitude').notNull(),
+        longitude: double('longitude').notNull(),
+    },
+    (table) => [
+        foreignKey({
+            name: 'fk_silver_malhas_estados_limitrofes_estado',
+            columns: [table.estadoId],
+            foreignColumns: [silverMalhasEstadosMetadados.id],
+        }).onDelete('cascade'),
+
+        primaryKey({
+            columns: [table.estadoId, table.ordem],
+        }),
+    ],
+);
+
+export const silverMalhasMunicipiosMetadados = mysqlTable(
+    'silver_malhas_municipios_metadados',
+    {
+        id: varchar('id', { length: 7 }).primaryKey(),
+        nome: text('nome').notNull(),
+
+        areaDimensao: double('area_dimensao'),
+        areaUnidadeId: varchar('area_unidade_id', { length: 20 }),
+        areaUnidadeNome: text('area_unidade_nome'),
+
+        centroideLatitude: double('centroide_latitude'),
+        centroideLongitude: double('centroide_longitude'),
+
+        nivelGeografico: text('nivel_geografico'),
+
+        transformedAt: timestamp('transformed_at')
+            .defaultNow()
+            .notNull(),
+    },
+);
+
+export const silverMalhasMunicipiosRegioesLimitrofes = mysqlTable(
+    'silver_malhas_municipios_regioes_limitrofes',
+    {
+        municipioId: varchar('municipio_id', { length: 7 }).notNull(),
+        ordem: int('ordem').notNull(),
+
+        latitude: double('latitude').notNull(),
+        longitude: double('longitude').notNull(),
+    },
+    (table) => [
+        foreignKey({
+            name: 'fk_silver_malhas_municipios_limitrofes_municipio',
+            columns: [table.municipioId],
+            foreignColumns: [silverMalhasMunicipiosMetadados.id],
+        }).onDelete('cascade'),
+
+        primaryKey({
+            columns: [table.municipioId, table.ordem],
+        }),
+    ],
+);
+
+export const silverMalhasPaisesMetadados = mysqlTable(
+    'silver_malhas_paises_metadados',
+    {
+        id: varchar('id', { length: 2 }).primaryKey(),
+        nome: text('nome').notNull(),
+
+        areaDimensao: double('area_dimensao'),
+        areaUnidadeId: varchar('area_unidade_id', { length: 20 }),
+        areaUnidadeNome: text('area_unidade_nome'),
+
+        centroideLatitude: double('centroide_latitude'),
+        centroideLongitude: double('centroide_longitude'),
+
+        nivelGeografico: text('nivel_geografico'),
+
+        transformedAt: timestamp('transformed_at')
+            .defaultNow()
+            .notNull(),
+    },
+);
+
+export const silverMalhasPaisesRegioesLimitrofes = mysqlTable(
+    'silver_malhas_paises_regioes_limitrofes',
+    {
+        paisId: varchar('pais_id', { length: 2 }).notNull(),
+        ordem: int('ordem').notNull(),
+
+        latitude: double('latitude').notNull(),
+        longitude: double('longitude').notNull(),
+    },
+    (table) => [
+        foreignKey({
+            name: 'fk_silver_malhas_paises_limitrofes_pais',
+            columns: [table.paisId],
+            foreignColumns: [silverMalhasPaisesMetadados.id],
+        }).onDelete('cascade'),
+
+        primaryKey({
+            columns: [table.paisId, table.ordem],
+        }),
+    ],
+);
+
+export const silverMalhasRegioesImediatasMetadados = mysqlTable(
+    'silver_malhas_regioes_imediatas_metadados',
+    {
+        id: varchar('id', { length: 6 }).primaryKey(),
+        nome: text('nome').notNull(),
+
+        areaDimensao: double('area_dimensao'),
+        areaUnidadeId: varchar('area_unidade_id', { length: 20 }),
+        areaUnidadeNome: text('area_unidade_nome'),
+
+        centroideLatitude: double('centroide_latitude'),
+        centroideLongitude: double('centroide_longitude'),
+
+        nivelGeografico: text('nivel_geografico'),
+
+        transformedAt: timestamp('transformed_at')
+            .defaultNow()
+            .notNull(),
+    },
+);
+
+export const silverMalhasRegioesImediatasRegioesLimitrofes = mysqlTable(
+    'silver_malhas_regioes_imediatas_regioes_limitrofes',
+    {
+        regiaoImediataId: varchar('regiao_imediata_id', { length: 6 }).notNull(),
+        ordem: int('ordem').notNull(),
+
+        latitude: double('latitude').notNull(),
+        longitude: double('longitude').notNull(),
+    },
+    (table) => [
+        foreignKey({
+            name: 'fk_silver_malhas_regioes_imediatas_limitrofes_regiao',
+            columns: [table.regiaoImediataId],
+            foreignColumns: [silverMalhasRegioesImediatasMetadados.id],
+        }).onDelete('cascade'),
+
+        primaryKey({
+            columns: [table.regiaoImediataId, table.ordem],
+        }),
+    ],
+);
+
+export const silverMalhasRegioesIntermediariasMetadados = mysqlTable(
+    'silver_malhas_regioes_intermediarias_metadados',
+    {
+        id: varchar('id', { length: 4 }).primaryKey(),
+        nome: text('nome').notNull(),
+
+        areaDimensao: double('area_dimensao'),
+        areaUnidadeId: varchar('area_unidade_id', { length: 20 }),
+        areaUnidadeNome: text('area_unidade_nome'),
+
+        centroideLatitude: double('centroide_latitude'),
+        centroideLongitude: double('centroide_longitude'),
+
+        nivelGeografico: text('nivel_geografico'),
+
+        transformedAt: timestamp('transformed_at')
+            .defaultNow()
+            .notNull(),
+    },
+);
+
+export const silverMalhasRegioesIntermediariasRegioesLimitrofes = mysqlTable(
+    'silver_malhas_regioes_intermediarias_regioes_limitrofes',
+    {
+        regiaoIntermediariaId: varchar('regiao_intermediaria_id', { length: 4 }).notNull(),
+        ordem: int('ordem').notNull(),
+
+        latitude: double('latitude').notNull(),
+        longitude: double('longitude').notNull(),
+    },
+    (table) => [
+        foreignKey({
+            name: 'fk_silver_malhas_regioes_intermediarias_limitrofes_regiao',
+            columns: [table.regiaoIntermediariaId],
+            foreignColumns: [silverMalhasRegioesIntermediariasMetadados.id],
+        }).onDelete('cascade'),
+
+        primaryKey({
+            columns: [table.regiaoIntermediariaId, table.ordem],
+        }),
+    ],
+);
+
+export const silverMalhasRegioesMetadados = mysqlTable(
+    'silver_malhas_regioes_metadados',
+    {
+        id: varchar('id', { length: 1 }).primaryKey(),
+        nome: text('nome').notNull(),
+
+        areaDimensao: double('area_dimensao'),
+        areaUnidadeId: varchar('area_unidade_id', { length: 20 }),
+        areaUnidadeNome: text('area_unidade_nome'),
+
+        centroideLatitude: double('centroide_latitude'),
+        centroideLongitude: double('centroide_longitude'),
+
+        nivelGeografico: text('nivel_geografico'),
+
+        transformedAt: timestamp('transformed_at')
+            .defaultNow()
+            .notNull(),
+    },
+);
+
+export const silverMalhasRegioesRegioesLimitrofes = mysqlTable(
+    'silver_malhas_regioes_regioes_limitrofes',
+    {
+        regiaoId: varchar('regiao_id', { length: 1 }).notNull(),
+        ordem: int('ordem').notNull(),
+
+        latitude: double('latitude').notNull(),
+        longitude: double('longitude').notNull(),
+    },
+    (table) => [
+        foreignKey({
+            name: 'fk_silver_malhas_regioes_limitrofes_regiao',
+            columns: [table.regiaoId],
+            foreignColumns: [silverMalhasRegioesMetadados.id],
+        }).onDelete('cascade'),
+
+        primaryKey({
+            columns: [table.regiaoId, table.ordem],
+        }),
+    ],
+);
+

@@ -1,6 +1,6 @@
 import { sql, isNotNull } from 'drizzle-orm';
 import { rawDb } from './db/raw/connection.js';
-import { logger } from './logger.js';
+import { logger as baseLogger } from './logger.js';
 import { runSilverPhase1, runSilverPhase2, runSilverBdgEstacoes } from './silver.js';
 import { normalizedDb } from './db/normalized/connection.js';
 import {
@@ -21,6 +21,10 @@ import {
     silverRmpgSensores
 } from './db/normalized/schema.js';
 import { RawRootResponses, ibgeIdentificadores } from './db/raw/schema.js';
+import { describeError } from './utils/errorInfo.js';
+import { createHash } from 'node:crypto';
+
+const logger = baseLogger.forModule('ingestion');
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -162,8 +166,8 @@ async function ingestPesquisasPeriodosIndicadoresResultados(endpointApiUrl: stri
         municipiosByUf.get(m.ufId)!.push(String(m.id));
     }
 
-    const MUNICIPIO_CHUNK_SIZE = 120;
-    const BATCH_SIZE = 15;
+    const MUNICIPIO_CHUNK_SIZE = 5;
+    const BATCH_SIZE = 3;
 
     for (const pesquisa of pesquisas) {
         const periodRecords = await normalizedDb
@@ -191,26 +195,31 @@ async function ingestPesquisasPeriodosIndicadoresResultados(endpointApiUrl: stri
 
         const coversMunicipios = await checkPesquisaCoversMunicipios(pesquisa.id, pesquisa.nome, periodQueries[0]);
         if (coversMunicipios) {
+            const MUNICIPIO_CHUNK_SIZE = 5;
+            const munChunks: string[] = [];
+
             for (const munList of municipiosByUf.values()) {
                 for (let i = 0; i < munList.length; i += MUNICIPIO_CHUNK_SIZE) {
-                    localityChunks.push(munList.slice(i, i + MUNICIPIO_CHUNK_SIZE).join('|'));
+                    munChunks.push(munList.slice(i, i + MUNICIPIO_CHUNK_SIZE).join('|'));
                 }
             }
-        }
 
-        for (const periodPipe of periodQueries) {
-            for (let j = 0; j < localityChunks.length; j += BATCH_SIZE) {
-                const batchLocalities = localityChunks.slice(j, j + BATCH_SIZE);
-                const promises = batchLocalities.map((loc) => {
-                    const populatedUrl = endpointApiUrl
-                        .replace('{pesquisa}', String(pesquisa.id))
-                        .replace('{periodos}', periodPipe)
-                        .replace('{posicao}', '0')
-                        .replace('{localidades}', loc);
-
-                    return ingestEndpoint(endpointApiUrl, populatedUrl);
+            const BATCH_SIZE = 15;
+            for (let i = 0; i < munChunks.length; i += BATCH_SIZE) {
+                const batch = munChunks.slice(i, i + BATCH_SIZE);
+                const promises = batch.flatMap((munPipe) => {
+                    return periodQueries.map((period) => {
+                        const urlObj = new URL(
+                            endpointApiUrl
+                                .replace('{pesquisa}', String(pesquisa.id))
+                                .replace('{localidades}', munPipe)
+                        );
+                        if (period) {
+                            urlObj.searchParams.set('periodo', period);
+                        }
+                        return ingestEndpoint(endpointApiUrl, urlObj.toString());
+                    });
                 });
-
                 await Promise.allSettled(promises);
             }
         }
@@ -239,8 +248,8 @@ async function ingestPesquisasIndicadoresResultados(endpointApiUrl: string) {
         municipiosByUf.get(m.ufId)!.push(String(m.id));
     }
 
-    const MUNICIPIO_CHUNK_SIZE = 120;
-    const BATCH_SIZE = 15;
+    const MUNICIPIO_CHUNK_SIZE = 5;
+    const BATCH_SIZE = 3;
 
     for (const pesquisa of pesquisas) {
         const periodRecords = await normalizedDb
@@ -779,7 +788,7 @@ async function ingestPesquisasGlobalResultados(endpointApiUrl: string) {
         municipiosByUf.get(m.ufId)!.push(String(m.id));
     }
 
-    const MUNICIPIO_CHUNK_SIZE = 120;
+    const MUNICIPIO_CHUNK_SIZE = 5;
     const localityChunks: string[] = [controlLocalidades];
 
     for (const munList of municipiosByUf.values()) {
@@ -788,7 +797,7 @@ async function ingestPesquisasGlobalResultados(endpointApiUrl: string) {
         }
     }
 
-    const BATCH_SIZE = 15;
+    const BATCH_SIZE = 3;
     for (const indChunk of indicatorChunks) {
         for (let j = 0; j < localityChunks.length; j += BATCH_SIZE) {
             const batchLocalities = localityChunks.slice(j, j + BATCH_SIZE);
@@ -1086,13 +1095,20 @@ async function ingestPesquisasResultados(endpointApiUrl: string) {
 
         const coversMunicipios = await checkPesquisaCoversMunicipios(pesquisa.id, pesquisa.nome, periodQueries[0]);
         if (coversMunicipios) {
-            const ufBatches = Array.from(municipiosByUf.entries());
+            const MUNICIPIO_CHUNK_SIZE = 5;
+            const munChunks: string[] = [];
+
+            for (const munList of municipiosByUf.values()) {
+                for (let i = 0; i < munList.length; i += MUNICIPIO_CHUNK_SIZE) {
+                    munChunks.push(munList.slice(i, i + MUNICIPIO_CHUNK_SIZE).join('|'));
+                }
+            }
+
             const BATCH_SIZE = 15;
 
-            for (let i = 0; i < ufBatches.length; i += BATCH_SIZE) {
-                const batch = ufBatches.slice(i, i + BATCH_SIZE);
-                const promises = batch.flatMap(([_, munIds]) => {
-                    const munPipe = munIds.join('|');
+            for (let i = 0; i < munChunks.length; i += BATCH_SIZE) {
+                const batch = munChunks.slice(i, i + BATCH_SIZE);
+                const promises = batch.flatMap((munPipe) => {
                     return periodQueries.map((period) => {
                         const urlObj = new URL(
                             endpointApiUrl
@@ -1122,21 +1138,30 @@ async function fetchWithBackoff(url: string, maxRetries = 5, initialDelayMs = 10
             const duration = Date.now() - start;
 
             if (response.ok) {
-                const data = await response.json();
-                logger.info({ url, status: response.status, duration }, `Sucesso ao extrair dados`);
-                return { status: response.status, data };
+                const text = await response.text();
+                try {
+                    const data = JSON.parse(text);
+                    logger.info({ url: url.length > 250 ? `${url.slice(0, 250)}...` : url, status: response.status, duration }, `Sucesso ao extrair dados`);
+                    return { status: response.status, data };
+                } catch {
+                    logger.warn({ url: url.length > 250 ? `${url.slice(0, 250)}...` : url, status: response.status, duration }, `Resposta retornou 200 mas conteúdo é HTML/não-JSON. Tentativa ${retries + 1}/${maxRetries}`);
+                    throw new Error(`Resposta não é um JSON válido: ${text.slice(0, 100)}`);
+                }
             }
 
             if (response.status === 429 || response.status >= 500) {
-                logger.warn({ url, status: response.status, duration }, `Falha recuperável. Tentativa ${retries + 1}/${maxRetries}`);
+                logger.warn({ url: url.length > 250 ? `${url.slice(0, 250)}...` : url, status: response.status, duration }, `Falha recuperável. Tentativa ${retries + 1}/${maxRetries}`);
                 throw new Error(`HTTP ${response.status}`);
             }
 
-            logger.error({ url, status: response.status, duration }, `Falha não recuperável (HTTP ${response.status})`);
+            logger.error({ url: url.length > 250 ? `${url.slice(0, 250)}...` : url, status: response.status, duration }, `Falha não recuperável (HTTP ${response.status})`);
             return { status: response.status, data: null };
         } catch (error) {
             if (retries === maxRetries) {
-                logger.error({ url, error: (error as Error).message }, `Esgotadas as tentativas para o endpoint`);
+                logger.error({
+                    url: url.length > 250 ? `${url.slice(0, 250)}...` : url,
+                    ...describeError(error)
+                }, `Esgotadas as tentativas para o endpoint`);
                 throw error;
             }
             await sleep(delay);
@@ -1147,56 +1172,95 @@ async function fetchWithBackoff(url: string, maxRetries = 5, initialDelayMs = 10
     throw new Error('Unreachable');
 }
 
-async function ingestEndpoint(endpointKey: string, baseUrl: string): Promise<boolean> {
+async function ingestEndpoint(
+    endpointKey: string,
+    baseUrl: string
+): Promise<boolean> {
     let currentPage = 1;
-    let totalPages = 1; // Será atualizado dinamicamente na primeira resposta bem-sucedida
+    let totalPages = 1;
     let isPaginated = false;
     let hasInserted = false;
 
-    // Condição inteligente: baseia-se no totalPages relatado pela API.
-    // Assim, se uma página específica (ex: 142) falhar, o loop não é abortado e tenta a 143.
     while (currentPage <= totalPages) {
         const urlObj = new URL(baseUrl);
 
-        // Adiciona o parâmetro dinâmico apenas se soubermos que é paginado ou se passou da página 1
         if (currentPage > 1 || isPaginated) {
             urlObj.searchParams.set('page', currentPage.toString());
         }
 
         const currentUrl = urlObj.toString();
 
+        let response: { status: number; data: any };
+
+        // 1. Extração: erros HTTP são tratados separadamente
         try {
-            const { status, data } = await fetchWithBackoff(currentUrl);
+            response = await fetchWithBackoff(currentUrl);
+        } catch (error) {
+            logger.error({
+                endpointKey,
+                page: currentPage,
+                urlLength: currentUrl.length,
+                ...describeError(error),
+            }, 'Falha ao extrair página do IBGE.');
 
-            if (!data) {
-                // Se retornou vazio de forma amigável (ex: 404 sem erro grave), ignora e tenta a próxima.
-                currentPage++;
-                continue;
+            currentPage++;
+            continue;
+        }
+
+        const { status, data } = response;
+
+        if (!data) {
+            currentPage++;
+            continue;
+        }
+
+        let recordCount = 0;
+        let nextTotalPages = totalPages;
+        let nextIsPaginated: any = isPaginated;
+
+        if (data && typeof data === 'object' && 'items' in data) {
+            nextIsPaginated = true;
+
+            recordCount = Array.isArray(data.items)
+                ? data.items.length
+                : 0;
+
+            if (data.totalPages) {
+                nextTotalPages = data.totalPages;
             }
+        } else {
+            recordCount = Array.isArray(data) ? data.length : 1;
+            nextTotalPages = 1;
+        }
 
-            let recordCount = 0;
+        // 2. Mede o tamanho real da resposta, não o tamanho da URL
+        const serializedPayload = JSON.stringify(data);
+        const payloadSizeBytes = Buffer.byteLength(serializedPayload, 'utf8');
+        const payloadSizeMB = Number(
+            (payloadSizeBytes / 1024 / 1024).toFixed(2)
+        );
 
-            // Detecta padrão de paginação do IBGE (possui 'items' e 'totalPages')
-            if (data && typeof data === 'object' && 'items' in data) {
-                isPaginated = true;
-                recordCount = Array.isArray(data.items) ? data.items.length : 0;
+        logger.info({
+            endpointKey,
+            page: currentPage,
+            recordCount,
+            payloadSizeBytes,
+            payloadSizeMB,
+        }, 'Resposta recebida e tamanho do payload calculado.');
 
-                // Atualiza o teto do loop com a resposta oficial da API
-                if (data.totalPages) {
-                    totalPages = data.totalPages;
-                }
-            } else {
-                // Tratamento para endpoints estáticos/não paginados
-                recordCount = Array.isArray(data) ? data.length : 1;
-                totalPages = 1; // Força a parada imediata após o salvamento para endpoints normais
-            }
+        const apiUrlHash = createHash('sha256')
+            .update(currentUrl)
+            .digest('hex');
 
+        // 3. Persistência: falha no banco NÃO deve avançar a página
+        try {
             await rawDb.insert(RawRootResponses)
                 .values({
                     endpointKey,
                     apiUrl: currentUrl,
+                    apiUrlHash,
                     page: currentPage,
-                    totalPages,
+                    totalPages: nextTotalPages,
                     httpStatus: status,
                     recordCount,
                     payload: data,
@@ -1209,13 +1273,30 @@ async function ingestEndpoint(endpointKey: string, baseUrl: string): Promise<boo
                         fetchedAt: sql`CURRENT_TIMESTAMP`,
                     },
                 });
-
-            hasInserted = true;
         } catch (error) {
-            logger.error({ endpointKey, url: currentUrl, error: (error as Error).message }, 'Falha isolada na página. Prosseguindo para a próxima (se houver).');
-            // O erro foi logado, mas o loop NÃO é interrompido (break).
-            // Apenas incrementamos a página abaixo para continuar tentando o resto da fila.
+            // Não usar o logger aqui: ele também pode depender do banco.
+            console.error('[INGESTION] Falha ao persistir resposta recebida:', {
+                endpointKey,
+                page: currentPage,
+                payloadSizeMB,
+                payloadSizeBytes,
+                url: currentUrl.slice(0, 250),
+                error: describeError(error),
+            });
+
+            // Interrompe esta ingestão. Não avança para a próxima página
+            // e não descarta silenciosamente a resposta que já foi recebida.
+            throw new Error(
+                `Falha ao persistir página ${currentPage} de ${endpointKey}. ` +
+                `Payload: ${payloadSizeMB} MB.`,
+                { cause: error }
+            );
         }
+
+        // Só atualiza o estado da paginação depois da gravação bem-sucedida.
+        hasInserted = true;
+        totalPages = nextTotalPages;
+        isPaginated = nextIsPaginated;
 
         currentPage++;
     }
